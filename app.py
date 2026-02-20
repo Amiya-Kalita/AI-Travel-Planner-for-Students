@@ -1,17 +1,18 @@
 import streamlit as st
-import pandas as pd
 import requests
+import pandas as pd
 import matplotlib.pyplot as plt
 import pydeck as pdk
-from openai import OpenAI
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.pagesizes import A4
 import io
 
-# ======================================================
-# SAFE API KEY LOADING (CLOUD SAFE)
-# ======================================================
+# =========================================================
+# CONFIG
+# =========================================================
+
+st.set_page_config(page_title="AI Travel Planner Pro", layout="wide")
 
 if "HF_API_KEY" not in st.secrets:
     st.error("Hugging Face API key not found in Streamlit Secrets.")
@@ -19,27 +20,35 @@ if "HF_API_KEY" not in st.secrets:
 
 HF_API_KEY = st.secrets["HF_API_KEY"]
 
-# ======================================================
-# OPENAI CLIENT USING HF ROUTER
-# ======================================================
+API_URL = "https://api-inference.huggingface.co/models/mistralai/Mistral-7B-Instruct-v0.2"
 
-client = OpenAI(
-    base_url="https://router.huggingface.co/v1",
-    api_key=HF_API_KEY,
-)
+HEADERS = {
+    "Authorization": f"Bearer {HF_API_KEY}"
+}
 
-# ======================================================
-# PAGE CONFIG
-# ======================================================
+# =========================================================
+# MODERN STYLE
+# =========================================================
 
-st.set_page_config(page_title="AI Travel Planner Pro", layout="wide")
+st.markdown("""
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+<style>
+html, body, [class*="css"]  {
+    font-family: 'Poppins', sans-serif;
+}
+.main-title {
+    font-size: 38px;
+    font-weight: 600;
+}
+</style>
+""", unsafe_allow_html=True)
 
-st.title("AI Travel Planner Pro")
-st.caption("Your intelligent student-friendly travel companion.")
+st.markdown('<div class="main-title">🌍 AI Travel Planner Pro</div>', unsafe_allow_html=True)
+st.caption("Your intelligent student-friendly travel companion")
 
-# ======================================================
-# SIDEBAR INPUTS
-# ======================================================
+# =========================================================
+# SIDEBAR
+# =========================================================
 
 st.sidebar.header("Trip Preferences")
 
@@ -52,10 +61,11 @@ accommodation = st.sidebar.selectbox("Accommodation", ["Hostel", "Budget Hotel",
 
 generate = st.sidebar.button("Generate Travel Plan")
 
-# ======================================================
+# =========================================================
 # WEATHER
-# ======================================================
+# =========================================================
 
+@st.cache_data(show_spinner=False)
 def get_weather(city):
     try:
         data = requests.get(f"https://wttr.in/{city}?format=j1").json()
@@ -65,10 +75,11 @@ def get_weather(city):
     except:
         return None, None
 
-# ======================================================
-# MAP
-# ======================================================
+# =========================================================
+# MAP COORDINATES
+# =========================================================
 
+@st.cache_data(show_spinner=False)
 def get_coordinates(city):
     try:
         url = f"https://nominatim.openstreetmap.org/search?city={city}&format=json"
@@ -79,29 +90,35 @@ def get_coordinates(city):
         return None, None
     return None, None
 
-# ======================================================
-# AI GENERATION (WITH ERROR HANDLING)
-# ======================================================
+# =========================================================
+# AI GENERATION
+# =========================================================
 
+@st.cache_data(show_spinner=False)
 def generate_plan(prompt):
-    try:
-        completion = client.chat.completions.create(
-            model="HuggingFaceH4/zephyr-7b-beta",  # <-- removed suffix
-            messages=[
-                {"role": "system", "content": "You are a professional travel planner."},
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=800,
-            temperature=0.7,
-        )
-        return completion.choices[0].message.content
+    payload = {
+        "inputs": prompt,
+        "parameters": {
+            "max_new_tokens": 800,
+            "temperature": 0.7,
+        }
+    }
 
-    except Exception as e:
-        return f"API Error: {str(e)}"
+    response = requests.post(API_URL, headers=HEADERS, json=payload)
 
-# ======================================================
+    if response.status_code != 200:
+        return f"API Error: {response.status_code} - {response.text}"
+
+    result = response.json()
+
+    if isinstance(result, list):
+        return result[0]["generated_text"]
+
+    return str(result)
+
+# =========================================================
 # PDF EXPORT
-# ======================================================
+# =========================================================
 
 def generate_pdf(text):
     buffer = io.BytesIO()
@@ -114,22 +131,30 @@ def generate_pdf(text):
     buffer.seek(0)
     return buffer
 
-# ======================================================
-# MAIN
-# ======================================================
+# =========================================================
+# MAIN LOGIC
+# =========================================================
 
 if generate and destination:
 
     prompt = f"""
-    Create a detailed {duration}-day itinerary for {destination}.
-    Budget: ₹{budget}
-    Travel style: {travel_style}
-    Food: {food_pref}
-    Stay: {accommodation}
-    Provide day-wise breakdown and total estimated cost.
-    """
+Create a detailed {duration}-day travel itinerary for {destination}.
 
-    with st.spinner("Generating travel plan..."):
+Budget: ₹{budget}
+Travel Style: {travel_style}
+Food Preference: {food_pref}
+Accommodation: {accommodation}
+
+Provide:
+- Day-wise breakdown
+- Morning / Afternoon / Evening plans
+- Daily cost estimate
+- Local transport suggestions
+- Final total cost summary
+Keep it structured and realistic for students.
+"""
+
+    with st.spinner("Generating your travel plan..."):
         plan = generate_plan(prompt)
 
     if plan.startswith("API Error"):
@@ -146,11 +171,11 @@ if generate and destination:
 
     st.markdown("---")
 
-    tab1, tab2, tab3 = st.tabs(["📌 Itinerary", "🗺 Map View", "💰 Budget"])
+    tab1, tab2, tab3 = st.tabs(["📌 Itinerary", "🗺 Map View", "💰 Budget Analysis"])
 
-    # ==================================================
+    # =====================================================
     # ITINERARY
-    # ==================================================
+    # =====================================================
 
     with tab1:
         st.markdown(plan)
@@ -158,9 +183,9 @@ if generate and destination:
         pdf = generate_pdf(plan)
         st.download_button("Download PDF", pdf, file_name="travel_plan.pdf")
 
-    # ==================================================
+    # =====================================================
     # MAP
-    # ==================================================
+    # =====================================================
 
     with tab2:
         lat, lon = get_coordinates(destination)
@@ -173,18 +198,14 @@ if generate and destination:
                 get_radius=500,
                 get_fill_color=[255, 0, 0],
             )
-            view_state = pdk.ViewState(
-                latitude=lat,
-                longitude=lon,
-                zoom=11,
-            )
+            view_state = pdk.ViewState(latitude=lat, longitude=lon, zoom=11)
             st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state))
         else:
             st.warning("Map not available.")
 
-    # ==================================================
+    # =====================================================
     # BUDGET
-    # ==================================================
+    # =====================================================
 
     with tab3:
         accom = budget * 0.35
@@ -204,4 +225,4 @@ else:
     st.info("Enter trip details and generate your travel plan.")
 
 st.markdown("---")
-st.caption("Deployed on Streamlit Cloud | Powered by Hugging Face Router")
+st.caption("Deployed on Streamlit Cloud | Powered by Hugging Face Inference API")
