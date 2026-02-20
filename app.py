@@ -12,7 +12,7 @@ import io
 
 # CONFIG
 
-HF_API_KEY = "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"
+HF_API_KEY = st.secrets["HF_API_KEY"]
 
 client = OpenAI(
     base_url="https://router.huggingface.co/v1",
